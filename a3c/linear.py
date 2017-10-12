@@ -12,6 +12,8 @@ from torch.autograd import Variable
 class Model(nn.Module):
     def __init__(self, input_dim, output_dim):
         super(Model, self).__init__()
+        self.volatile = False
+        self.dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
         self._init(input_dim, output_dim, {})
 
     def set_volatile(self, volatile):
@@ -22,6 +24,7 @@ class Model(nn.Module):
         self.volatile = volatile
 
     def to_var(self, x):
+        x = torch.from_numpy(x).type(self.dtype).unsqueeze(0)
         return Variable(x, volatile=self.volatile)
 
     def set_gpu(self, id):
@@ -49,6 +52,7 @@ class Linear(Model):
         self.hidden_layers = nn.Sequential(*layers)
 
         self.logits = nn.Linear(last_layer_size, num_outputs)
+        self.probs = nn.Softmax()
         self.value_branch = nn.Linear(last_layer_size, 1)
 
     def setup_loss(self):
@@ -112,8 +116,9 @@ class Linear(Model):
 
     def compute_action(self, observations):
         logits = self.compute_logits(observations)
-        import ipdb; ipdb.set_trace()
-        return torch.multinomial(logits, 1)
+        sample = self.probs(logits).multinomial()
+        # TODO(rliaw): find out good way to abstract this
+        return sample.data.numpy()[0]  # note that this is not multidimensional friendly...
 
     def value(self, obs):
         x = self.to_var(obs)
