@@ -52,12 +52,30 @@ class Linear(Model):
         self.value_branch = nn.Linear(last_layer_size, 1)
 
     def setup_loss(self):
-        V = batch[self.value_node]
-        value_err = self.value_loss(V, Variable(batch["target"]))
-        self._reg_backward(V)
-        stats["predicted_" + self.value_node].feed(V.data[0])
-        stats[self.value_node + "_err"].feed(value_err.data[0])
-        self.loss = self.pi_loss
+        self.value_loss = nn.MSELoss().cuda()
+        self.pi_loss = nn.NLLLoss().cuda()
+        self.optimizer = torch.optim.Adam()
+
+    def _policy_entropy_loss(self, logits, a, adv):
+        def bw_hook(grad_in):
+            grad = grad_in.mul(adv)
+            # clip??
+            return grad
+        batch = a.size(0)
+        pi_err = self.pi_loss(logits, a)
+        ent_err = self.entropy(logits) / batch
+        logits.register_hook(bw_hook)
+        return pi_err, ent_err
+
+    def _backward(self, batch):
+        # not sure if this takes tensors ...........
+        pi_err, ent_err = self.policy_entropy_loss(batch["logits"],
+                                                   a,
+                                                   self.to_var(batch["adv"]))
+        value_err = self.value_loss(batch["V"], Variable(batch["R"]))
+        overall_err = value_err + pi_err
+        overall_err += ent_err * self.args.entropy_ratio
+        overall_err.backward()
 
     def model_update(self, batch):
         """ Implements compute + apply """
@@ -65,7 +83,7 @@ class Linear(Model):
         # caching property that doesn't require 
         # full batch to be passed in....
         self.optimizer.zero_grad()
-        self.loss.backward(batch)
+        self._backward(batch)
         self.optimizer.step()
 
     def get_weights(self):
@@ -76,7 +94,7 @@ class Linear(Model):
 
     def compute_gradients(self, batch):
         self.optimizer.zero_grad()
-        self.loss.backward(batch)
+        self._backward(batch)
 
         # Note that return values are just references;
         # calling zero_grad will modify the values
@@ -103,8 +121,8 @@ class Linear(Model):
         res = self.value_branch(res)
         return res
 
-    def entropy(self):
-        pass
+    def entropy(self, logits):
+        return (logits * torch.exp(logits)).sum()
 
 if __name__ == '__main__':
     net = Linear(10, 5)
