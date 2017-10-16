@@ -1,93 +1,132 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
-import tensorflow as tf
-import ray
-import gym
+import torch
+import torch.nn as nn
+from torch.autograd import Variable
+import torch.nn.functional as F
+# Code adapted from ELF
 
 
-class Policy(object):
-    """The policy base class."""
-    def __init__(self, ob_space, action_space, name="local", summarize=True):
-        self.local_steps = 0
-        self.summarize = summarize
-        worker_device = "/job:localhost/replica:0/task:0/cpu:0"
-        self.g = tf.Graph()
-        with self.g.as_default(), tf.device(worker_device):
-            with tf.variable_scope(name):
-                self.setup_graph(ob_space, action_space)
-                assert all([hasattr(self, attr)
-                            for attr in ["vf", "logits", "x", "var_list"]])
-            print("Setting up loss")
-            self.setup_loss(action_space)
-            self.setup_gradients()
-            self.initialize()
+# TODO(rliaw): RNN
+# TODO(rliaw): logging
+# TODO(rliaw): GPU
+# TODO(parameters)
+# TODO - maybe make it such that local calls do not force the tensor out of the wrapping, only during remote calls
 
-    def setup_graph(self):
+class Model(nn.Module):
+    def __init__(self, obs_space, ac_space):
+        output_dim = ac_space.n
+        input_dim = obs_space[0]
+        super(Model, self).__init__()
+        self.volatile = False
+        self.dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
+        self._init(input_dim, output_dim, {})
+
+    def set_volatile(self, volatile):
+        ''' Set model to ``volatile``.
+
+        Args:
+            volatile(bool): indicating that the Variable should be used in inference mode, i.e. don't save the history.'''
+        self.volatile = volatile
+
+    def set_gpu(self, id):
+        pass
+
+    def var_to_np(self, var):
+        # Assumes single input
+        return var.data.numpy()[0]
+
+
+class Policy(Model):
+
+    def _init(self, inputs, num_outputs, options):
         raise NotImplementedError
 
-    def setup_loss(self, action_space):
-        if isinstance(action_space, gym.spaces.Box):
-            ac_size = action_space.shape[0]
-            self.ac = tf.placeholder(tf.float32, [None, ac_size], name="ac")
-        elif isinstance(action_space, gym.spaces.Discrete):
-            self.ac = tf.placeholder(tf.int64, [None], name="ac")
-        else:
-            raise NotImplemented(
-                "action space" + str(type(action_space)) +
-                "currently not supported")
-        self.adv = tf.placeholder(tf.float32, [None], name="adv")
-        self.r = tf.placeholder(tf.float32, [None], name="r")
+    def setup_loss(self):
+        self.optimizer = torch.optim.SGD(self.parameters(), lr=0.001)
 
-        log_prob = self.curr_dist.logp(self.ac)
+    def _policy_entropy_loss(self, ac_logprobs, advs):
+        return -(advs * ac_logprobs).mean()
 
-        # The "policy gradients" loss: its derivative is precisely the policy
-        # gradient. Notice that self.ac is a placeholder that is provided
-        # externally. adv will contain the advantages, as calculated in
-        # process_rollout.
-        self.pi_loss = - tf.reduce_sum(log_prob * self.adv)
+    def _convert_batch(self, batch):
+        states = Variable(torch.from_numpy(batch.si).float())
+        acs = Variable(torch.from_numpy(batch.a))
+        advs = Variable(torch.from_numpy(batch.adv.copy()).float())
+        advs = advs.view(-1, 1)
+        rs = Variable(torch.from_numpy(batch.r.copy()).float())
+        rs = rs.view(-1, 1)
+        return states, acs, advs, rs
 
-        delta = self.vf - self.r
-        self.vf_loss = 0.5 * tf.reduce_sum(tf.square(delta))
-        self.entropy = tf.reduce_sum(self.curr_dist.entropy())
-        self.loss = self.pi_loss + 0.5 * self.vf_loss - self.entropy * 0.01
+    def _backward(self, batch):
+        # not sure if this takes tensors ...........
 
-    def setup_gradients(self):
-        grads = tf.gradients(self.loss, self.var_list)
-        self.grads, _ = tf.clip_by_global_norm(grads, 40.0)
-        grads_and_vars = list(zip(self.grads, self.var_list))
-        opt = tf.train.AdamOptimizer(1e-4)
-        self._apply_gradients = opt.apply_gradients(grads_and_vars)
+        # reinsert into graphs
+        states, acs, advs, rs = self._convert_batch(batch)
+        values, ac_logprobs, entropy = self._evaluate(states, acs)
+        pi_err = self._policy_entropy_loss(ac_logprobs, advs)
+        value_err = (values - rs).pow(2).mean()
 
-    def initialize(self):
+        self.optimizer.zero_grad()
+        overall_err = value_err + pi_err - entropy * 0.1
+        overall_err.backward()
 
-        self.sess = tf.Session(graph=self.g, config=tf.ConfigProto(
-            intra_op_parallelism_threads=1, inter_op_parallelism_threads=2))
-        self.variables = ray.experimental.TensorFlowVariables(self.loss,
-                                                              self.sess)
-        self.sess.run(tf.global_variables_initializer())
+    def _evaluate(self, states, actions):
+        res = self.hidden_layers(states)
+        values = self.value_branch(res)
+        logits = self.logits(res)
+        log_probs = F.log_softmax(logits)
+        probs = self.probs(logits)
+        action_log_probs = log_probs.gather(1, actions.view(-1, 1))
+        entropy = -(log_probs * probs).sum(-1).mean()
+        return values, action_log_probs, entropy
 
-    def model_update(self, grads):
-        feed_dict = {self.grads[i]: grads[i]
-                     for i in range(len(grads))}
-        self.sess.run(self._apply_gradients, feed_dict=feed_dict)
+    def forward(self, x):
+        res = self.hidden_layers(x)
+        logits = self.logits(res)
+        value = self.value_branch(res)
+        return logits, value
+
+    ########### EXTERNAL API ##################
+    def model_update(self, batch):
+        """ Implements compute + apply """
+        # TODO(rliaw): Pytorch has nice 
+        # caching property that doesn't require 
+        # full batch to be passed in - can exploit that
+        self._backward(batch)
+        self.optimizer.step()
+
+    def compute_gradients(self, batch):
+        self._backward(batch)
+        # Note that return values are just references;
+        # calling zero_grad will modify the values
+        return [p.grad.data.numpy() for p in self.parameters()], {}
+
+    def apply_gradients(self, grads):
+        for g, p in zip(grads, self.parameters()):
+            p.grad = Variable(torch.from_numpy(g))
+        self.optimizer.step()
+
+    def compute(self, observations, features):
+        x = Variable(torch.from_numpy(observations).float())
+        logits, values = self(x)
+        samples = self.probs(logits.unsqueeze(0)).multinomial().squeeze()
+        return self.var_to_np(samples), self.var_to_np(values), [None]
+
+    def compute_logits(self, observations):
+        x = Variable(torch.from_numpy(observations).float())
+        res = self.hidden_layers(x)
+        return self.var_to_np(self.logits(res))
+
+    def value(self, observations, features):
+        x = Variable(torch.from_numpy(observations).float())
+        res = self.hidden_layers(x)
+        res = self.value_branch(res)
+        return self.var_to_np(res)
 
     def get_weights(self):
-        weights = self.variables.get_weights()
-        return weights
+        ## !! This only returns references to the data.
+        return self.state_dict()
 
     def set_weights(self, weights):
-        self.variables.set_weights(weights)
+        self.load_state_dict(weights)
 
-    def get_gradients(self, batch):
-        raise NotImplementedError
-
-    def get_vf_loss(self):
-        raise NotImplementedError
-
-    def compute_actions(self, observations):
-        raise NotImplementedError
-
-    def value(self, ob):
-        raise NotImplementedError
+    def get_initial_features(self):
+        return [None]
