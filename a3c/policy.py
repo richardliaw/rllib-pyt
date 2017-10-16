@@ -61,14 +61,6 @@ class Policy(object):
         self._apply_gradients = opt.apply_gradients(grads_and_vars)
 
     def initialize(self):
-        if self.summarize:
-            bs = tf.to_float(tf.shape(self.x)[0])
-            tf.summary.scalar("model/policy_loss", self.pi_loss / bs)
-            tf.summary.scalar("model/value_loss", self.vf_loss / bs)
-            tf.summary.scalar("model/entropy", self.entropy / bs)
-            tf.summary.scalar("model/grad_gnorm", tf.global_norm(self.grads))
-            tf.summary.scalar("model/var_gnorm", tf.global_norm(self.var_list))
-            self.summary_op = tf.summary.merge_all()
 
         self.sess = tf.Session(graph=self.g, config=tf.ConfigProto(
             intra_op_parallelism_threads=1, inter_op_parallelism_threads=2))

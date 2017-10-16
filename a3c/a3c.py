@@ -9,8 +9,8 @@ import six.moves.queue as queue
 import os
 
 import ray
-from ray.rllib.a3c.runner import RunnerThread, process_rollout
-from ray.rllib.a3c.envs import create_and_wrap
+from runner import RunnerThread, process_rollout
+from envs import create_and_wrap
 from ray.rllib.common import Agent, TrainingResult
 
 
@@ -108,7 +108,7 @@ class A3CAgent(Agent):
         while gradient_list:
             done_id, gradient_list = ray.wait(gradient_list)
             gradient, info = ray.get(done_id)[0]
-            self.policy.apply_gradient(gradient)
+            self.policy.apply_gradients(gradient)
             self.parameters = self.policy.get_weights()
             if batches_so_far < max_batches:
                 batches_so_far += 1

@@ -41,7 +41,7 @@ def rollout(pi, env):
     t = 0
     ob = (env.reset())
     for _ in range(200):
-        ac, value = pi.compute(ob)
+        ac, value = pi.compute(ob, [])
         rollout["obs"].append(ob)
         rollout["vs"].append(value)
         rollout["actions"].append(ac)

@@ -12,7 +12,9 @@ import torch.nn.functional as F
 # TODO - maybe make it such that local calls do not force the tensor out of the wrapping, only during remote calls
 
 class Model(nn.Module):
-    def __init__(self, input_dim, output_dim):
+    def __init__(self, obs_space, ac_space):
+        output_dim = ac_space.n
+        input_dim = obs_space[0]
         super(Model, self).__init__()
         self.volatile = False
         self.dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
@@ -36,7 +38,7 @@ class Model(nn.Module):
 class Linear(Model):
 
     def _init(self, inputs, num_outputs, options):
-        hiddens = options.get("fcnet_hiddens", [256, 256])
+        hiddens = options.get("fcnet_hiddens", [16, 16])
         fcnet_activation = options.get("fcnet_activation", "tanh")
         activation = None
         if fcnet_activation == "tanh":
@@ -63,6 +65,15 @@ class Linear(Model):
 
     def _policy_entropy_loss(self, ac_logprobs, advs):
         return -(advs * ac_logprobs).mean()
+
+    def _convert_batch(self, batch):
+        states = Variable(torch.from_numpy(batch.si).float())
+        acs = Variable(torch.from_numpy(batch.a))
+        advs = Variable(torch.from_numpy(batch.adv.copy()).float())
+        advs = advs.view(-1, 1)
+        rs = Variable(torch.from_numpy(batch.r.copy()).float())
+        rs = rs.view(-1, 1)
+        return states, acs, advs, rs
 
     def _backward(self, batch):
         # not sure if this takes tensors ...........
@@ -94,16 +105,6 @@ class Linear(Model):
         return logits, value
 
     ########### EXTERNAL API ##################
-
-    def _convert_batch(self, batch):
-        states = Variable(torch.from_numpy(batch.si).float())
-        acs = Variable(torch.from_numpy(batch.a))
-        advs = Variable(torch.from_numpy(batch.adv.copy()).float())
-        advs = advs.view(-1, 1)
-        rs = Variable(torch.from_numpy(batch.r.copy()).float())
-        rs = rs.view(-1, 1)
-        return states, acs, advs, rs
-
     def model_update(self, batch):
         """ Implements compute + apply """
         # TODO(rliaw): Pytorch has nice 
@@ -116,7 +117,7 @@ class Linear(Model):
         self._backward(batch)
         # Note that return values are just references;
         # calling zero_grad will modify the values
-        return [p.grad.data.numpy() for p in self.parameters()]
+        return [p.grad.data.numpy() for p in self.parameters()], {}
 
     def apply_gradients(self, grads):
         for g, p in zip(grads, self.parameters()):
@@ -127,14 +128,14 @@ class Linear(Model):
         x = Variable(torch.from_numpy(observations).float())
         logits, values = self(x)
         samples = self.probs(logits.unsqueeze(0)).multinomial().squeeze()
-        return self.var_to_np(samples), self.var_to_np(values)
+        return self.var_to_np(samples), self.var_to_np(values), [None]
 
     def compute_logits(self, observations):
         x = Variable(torch.from_numpy(observations).float())
         res = self.hidden_layers(x)
         return self.var_to_np(self.logits(res))
 
-    def value(self, observations):
+    def value(self, observations, features):
         x = Variable(torch.from_numpy(observations).float())
         res = self.hidden_layers(x)
         res = self.value_branch(res)
@@ -147,8 +148,8 @@ class Linear(Model):
     def set_weights(self, weights):
         self.load_state_dict(weights)
 
-    def get_initial_features():
-        return None
+    def get_initial_features(self):
+        return [None]
 
 if __name__ == '__main__':
     net = Linear(10, 5)

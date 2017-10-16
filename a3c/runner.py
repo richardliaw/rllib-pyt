@@ -112,7 +112,7 @@ class RunnerThread(threading.Thread):
                 self.queue.put(item, timeout=600.0)
 
 
-def env_runner(env, policy, num_local_steps, summary_writer, render):
+def env_runner(env, policy, num_local_steps, render):
     """This implements the logic of the thread runner.
 
     It continually runs the policy, and as long as the rollout exceeds a
