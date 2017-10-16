@@ -4,7 +4,6 @@ from __future__ import print_function
 
 from collections import namedtuple
 import numpy as np
-import tensorflow as tf
 import six.moves.queue as queue
 import scipy.signal
 import threading
@@ -46,6 +45,7 @@ class PartialRollout(object):
     We run our agent, and process its experience once it has processed enough
     steps.
     """
+
     def __init__(self):
         self.states = []
         self.actions = []
@@ -76,6 +76,7 @@ class PartialRollout(object):
 
 class RunnerThread(threading.Thread):
     """This thread interacts with the environment and tells it what to do."""
+
     def __init__(self, env, policy, num_local_steps, visualise=False):
         threading.Thread.__init__(self)
         self.queue = queue.Queue(5)
@@ -85,27 +86,21 @@ class RunnerThread(threading.Thread):
         self.last_features = None
         self.policy = policy
         self.daemon = True
-        self.sess = None
-        self.summary_writer = None
         self.visualise = visualise
 
-    def start_runner(self, sess, summary_writer):
-        self.sess = sess
-        self.summary_writer = summary_writer
+    def start_runner(self):
         self.start()
 
     def run(self):
         try:
-            with self.sess.as_default():
-                self._run()
+            self._run()
         except BaseException as e:
             self.queue.put(e)
             raise e
 
     def _run(self):
         rollout_provider = env_runner(
-            self.env, self.policy, self.num_local_steps,
-            self.summary_writer, self.visualise)
+            self.env, self.policy, self.num_local_steps, self.visualise)
         while True:
             # The timeout variable exists because apparently, if one worker
             # dies, the other workers won't die with it, unless the timeout is
@@ -136,7 +131,7 @@ def env_runner(env, policy, num_local_steps, summary_writer, render):
         rollout = PartialRollout()
 
         for _ in range(num_local_steps):
-            fetched = policy.compute_actions(last_state, *last_features)
+            fetched = policy.compute(last_state, *last_features)
             action, value_, features = fetched[0], fetched[1], fetched[2:]
             # Argmax to convert from one-hot.
             state, reward, terminal, info = env.step(action)
@@ -154,13 +149,6 @@ def env_runner(env, policy, num_local_steps, summary_writer, render):
 
             last_state = state
             last_features = features
-
-            if info:
-                summary = tf.Summary()
-                for k, v in info.items():
-                    summary.value.add(tag=k, simple_value=float(v))
-                summary_writer.add_summary(summary, rollout_number)
-                summary_writer.flush()
 
             if terminal:
                 terminal_end = True

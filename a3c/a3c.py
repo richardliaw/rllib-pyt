@@ -4,16 +4,14 @@ from __future__ import print_function
 
 import numpy as np
 import pickle
-import tensorflow as tf
+from linear import Linear
 import six.moves.queue as queue
 import os
 
 import ray
 from ray.rllib.a3c.runner import RunnerThread, process_rollout
 from ray.rllib.a3c.envs import create_and_wrap
-from ray.rllib.common import Agent, TrainingResult, get_tensorflow_log_dir
-from ray.rllib.a3c.shared_model import SharedModel
-from ray.rllib.a3c.shared_model_lstm import SharedModelLSTM
+from ray.rllib.common import Agent, TrainingResult
 
 
 DEFAULT_CONFIG = {
@@ -73,22 +71,13 @@ class Runner(object):
         return completed
 
     def start(self):
-        logdir = get_tensorflow_log_dir(self.logdir)
-        summary_writer = tf.summary.FileWriter(
-            os.path.join(logdir, "agent_%d" % self.id))
-        self.summary_writer = summary_writer
-        self.runner.start_runner(self.policy.sess, summary_writer)
+        self.runner.start_runner()
 
     def compute_gradient(self, params):
         self.policy.set_weights(params)
         rollout = self.pull_batch_from_queue()
         batch = process_rollout(rollout, gamma=0.99, lambda_=1.0)
-        gradient, info = self.policy.get_gradients(batch)
-        if "summary" in info:
-            self.summary_writer.add_summary(
-                tf.Summary.FromString(info['summary']),
-                self.policy.local_steps)
-            self.summary_writer.flush()
+        gradient, info = self.policy.compute_gradients(batch)
         info = {"id": self.id,
                 "size": len(batch.a)}
         return gradient, info
@@ -96,13 +85,11 @@ class Runner(object):
 
 class A3CAgent(Agent):
     _agent_name = "A3C"
+    _default_config = DEFAULT_CONFIG
 
     def _init(self):
         self.env = create_and_wrap(self.env_creator, self.config["model"])
-        if self.config["use_lstm"]:
-            policy_cls = SharedModelLSTM
-        else:
-            policy_cls = SharedModel
+        policy_cls = Linear
         self.policy = policy_cls(
             self.env.observation_space.shape, self.env.action_space)
         self.agents = [
@@ -121,7 +108,7 @@ class A3CAgent(Agent):
         while gradient_list:
             done_id, gradient_list = ray.wait(gradient_list)
             gradient, info = ray.get(done_id)[0]
-            self.policy.model_update(gradient)
+            self.policy.apply_gradient(gradient)
             self.parameters = self.policy.get_weights()
             if batches_so_far < max_batches:
                 batches_so_far += 1

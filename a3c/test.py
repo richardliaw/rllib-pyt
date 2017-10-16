@@ -12,32 +12,6 @@ Batch = namedtuple(
     "Batch", ["si", "a", "adv", "r", "v", "terminal", "features"])
 
 
-def rollout(pi, env):
-    """Do a rollout.
-
-    If random_stream is provided, the rollout will take noisy actions with
-    noise drawn from that stream. Otherwise, no action noise will be added.
-    """
-    rollout = defaultdict(list)
-    t = 0
-    ob = (env.reset())
-    for _ in range(500):
-        ac, info = pi.compute_action(ob)
-        v = pi.value(ob)
-        rollout["obs"].append(ob)
-        rollout["vs"].append(v)
-        rollout["actions"].append(ac)
-        rollout["logits"].append(info["logits"])
-        ob, rew, done, _ = env.step(ac)
-        rollout["rs"].append(rew)
-        t += 1
-        if done:
-            break
-    rollout["r"] = 0
-    rollout["terminal"] = True
-    return rollout
-
-
 def process_rollout(rollout, gamma, lambda_=1.0):
     """Given a rollout, compute its returns and the advantage."""
     batch_si = np.asarray(rollout["obs"])
@@ -57,9 +31,48 @@ def process_rollout(rollout, gamma, lambda_=1.0):
                  features)
 
 
+def rollout(pi, env):
+    """Do a rollout.
+
+    If random_stream is provided, the rollout will take noisy actions with
+    noise drawn from that stream. Otherwise, no action noise will be added.
+    """
+    rollout = defaultdict(list)
+    t = 0
+    ob = (env.reset())
+    for _ in range(200):
+        ac, value = pi.compute(ob)
+        rollout["obs"].append(ob)
+        rollout["vs"].append(value)
+        rollout["actions"].append(ac)
+        ob, rew, done, _ = env.step(ac)
+        rollout["rs"].append(rew)
+        t += 1
+        if done:
+            break
+    print("Cur policy: ", len(rollout["obs"]))
+    rollout["r"] = 0
+    rollout["terminal"] = True
+    return rollout
+
 policy = Linear(env.observation_space.shape[0], env.action_space.n)
 print("Current Norm", sum(p.norm().data.numpy() for p in policy.parameters()))
-data = rollout(policy, env)
-batch = process_rollout(data, 0.99)
-policy.model_update(batch)
-print("After Norm", sum(p.norm().data.numpy() for p in policy.parameters()))
+import pickle
+for i in range(500):
+    data = rollout(policy, env)
+    batch = process_rollout(data, 0.99)
+    print(sum([p.norm() for p in policy.parameters()]))
+    model_state = pickle.dumps(policy.get_weights())
+    import ipdb; ipdb.set_trace()
+    grad = policy.compute_gradients(batch)
+    policy.apply_gradients(grad)
+    print(sum([p.norm() for p in policy.parameters()]))
+
+    model_state = pickle.loads(model_state)
+    policy.set_weights(model_state)
+    print(sum([p.norm() for p in policy.parameters()]))
+    policy.model_update(batch)
+    print(sum([p.norm() for p in policy.parameters()]))
+
+
+
