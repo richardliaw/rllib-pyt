@@ -5,6 +5,7 @@ from __future__ import print_function
 import numpy as np
 import pickle
 from linear import Linear
+from clstm import LSTM
 import six.moves.queue as queue
 import os
 
@@ -89,7 +90,7 @@ class A3CAgent(Agent):
 
     def _init(self):
         self.env = create_and_wrap(self.env_creator, self.config["model"])
-        policy_cls = Linear
+        policy_cls = LSTM
         self.policy = policy_cls(
             self.env.observation_space.shape, self.env.action_space)
         self.agents = [

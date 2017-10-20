@@ -11,14 +11,25 @@ import torch.nn.functional as F
 # TODO(parameters)
 # TODO - maybe make it such that local calls do not force the tensor out of the wrapping, only during remote calls
 
+
+def convert_batch(batch):
+    states = Variable(torch.from_numpy(batch.si).float())
+    acs = Variable(torch.from_numpy(batch.a))
+    advs = Variable(torch.from_numpy(batch.adv.copy()).float())
+    advs = advs.view(-1, 1)
+    rs = Variable(torch.from_numpy(batch.r.copy()).float())
+    rs = rs.view(-1, 1)
+    import ipdb; ipdb.set_trace()
+    features = [Variable(torch.from_numpy(f)) for f in batch.features]
+    return states, acs, advs, rs, features
+
+
 class Model(nn.Module):
     def __init__(self, obs_space, ac_space):
-        output_dim = ac_space.n
-        input_dim = obs_space[0]
         super(Model, self).__init__()
         self.volatile = False
         self.dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
-        self._init(input_dim, output_dim, {})
+        self._init(obs_space, ac_space, {})
 
     def set_volatile(self, volatile):
         ''' Set model to ``volatile``.
@@ -46,20 +57,11 @@ class Policy(Model):
     def _policy_entropy_loss(self, ac_logprobs, advs):
         return -(advs * ac_logprobs).mean()
 
-    def _convert_batch(self, batch):
-        states = Variable(torch.from_numpy(batch.si).float())
-        acs = Variable(torch.from_numpy(batch.a))
-        advs = Variable(torch.from_numpy(batch.adv.copy()).float())
-        advs = advs.view(-1, 1)
-        rs = Variable(torch.from_numpy(batch.r.copy()).float())
-        rs = rs.view(-1, 1)
-        return states, acs, advs, rs
-
     def _backward(self, batch):
         # not sure if this takes tensors ...........
 
         # reinsert into graphs
-        states, acs, advs, rs = self._convert_batch(batch)
+        states, acs, advs, rs, _ = convert_batch(batch)
         values, ac_logprobs, entropy = self._evaluate(states, acs)
         pi_err = self._policy_entropy_loss(ac_logprobs, advs)
         value_err = (values - rs).pow(2).mean()
@@ -68,10 +70,8 @@ class Policy(Model):
         overall_err = value_err + pi_err - entropy * 0.1
         overall_err.backward()
 
-    def _evaluate(self, states, actions):
-        res = self.hidden_layers(states)
-        values = self.value_branch(res)
-        logits = self.logits(res)
+    def _evaluate(self, x, actions):
+        logits, values, features = self(x)
         log_probs = F.log_softmax(logits)
         probs = self.probs(logits)
         action_log_probs = log_probs.gather(1, actions.view(-1, 1))
@@ -82,7 +82,7 @@ class Policy(Model):
         res = self.hidden_layers(x)
         logits = self.logits(res)
         value = self.value_branch(res)
-        return logits, value
+        return logits, value, []
 
     ########### EXTERNAL API ##################
     def model_update(self, batch):
@@ -104,22 +104,14 @@ class Policy(Model):
             p.grad = Variable(torch.from_numpy(g))
         self.optimizer.step()
 
-    def compute(self, observations, features):
-        x = Variable(torch.from_numpy(observations).float())
-        logits, values = self(x)
-        samples = self.probs(logits.unsqueeze(0)).multinomial().squeeze()
-        return self.var_to_np(samples), self.var_to_np(values), [None]
+    def compute(self, x, *args):
+        raise NotImplementedError
 
-    def compute_logits(self, observations):
-        x = Variable(torch.from_numpy(observations).float())
-        res = self.hidden_layers(x)
-        return self.var_to_np(self.logits(res))
+    def compute_logits(self, x, *args):
+        raise NotImplementedError
 
-    def value(self, observations, features):
-        x = Variable(torch.from_numpy(observations).float())
-        res = self.hidden_layers(x)
-        res = self.value_branch(res)
-        return self.var_to_np(res)
+    def value(self, x, *args):
+        raise NotImplementedError
 
     def get_weights(self):
         ## !! This only returns references to the data.

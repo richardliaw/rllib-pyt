@@ -2,6 +2,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import numpy as np
 import gym
 from gym.spaces.box import Box
 import logging
@@ -25,12 +26,11 @@ class RLLibPreprocessing(gym.ObservationWrapper):
         super(RLLibPreprocessing, self).__init__(env)
         self.preprocessor = ModelCatalog.get_preprocessor(
             env_id, env.observation_space.shape, options)
-        self._process_shape = self.preprocessor.transform_shape(
-            env.observation_space.shape)
+        self._process_shape = [1, 42, 42]
         self.observation_space = Box(-1.0, 1.0, self._process_shape)
 
     def _observation(self, observation):
-        return self.preprocessor.transform(observation)
+        return np.reshape(self.preprocessor.transform(observation), [1, 42, 42])
 
 
 class Diagnostic(gym.Wrapper):

@@ -3,11 +3,15 @@ import gym
 import numpy as np
 from collections import defaultdict, namedtuple
 from runner import discount
-
+from envs import create_and_wrap
 
 import ipdb
 
-env = gym.make("CartPole-v0")
+# env = gym.make("CartPole-v0")
+env = create_and_wrap(lambda: gym.make("Pong-v4"), 
+        {"grayscale": True,
+         "zero_mean": False,
+         "dim": 42})
 Batch = namedtuple(
     "Batch", ["si", "a", "adv", "r", "v", "terminal", "features"])
 
@@ -26,7 +30,7 @@ def process_rollout(rollout, gamma, lambda_=1.0):
     # This formula for the advantage comes "Generalized Advantage Estimation":
     # https://arxiv.org/abs/1506.02438
     batch_adv = discount(delta_t, gamma * lambda_)
-    features = None
+    features = rollout["features"][0]
     return Batch(batch_si, batch_a, batch_adv, batch_r, batch_v, rollout["terminal"],
                  features)
 
@@ -40,13 +44,16 @@ def rollout(pi, env):
     rollout = defaultdict(list)
     t = 0
     ob = (env.reset())
+    features = pi.get_initial_features()
     for _ in range(200):
-        ac, value = pi.compute(ob, [])
+        rets = pi.compute(ob, features)
+        ac, value, features = rets[0], rets[1], rets[2:]
         rollout["obs"].append(ob)
         rollout["vs"].append(value)
         rollout["actions"].append(ac)
         ob, rew, done, _ = env.step(ac)
         rollout["rs"].append(rew)
+        rollout["features"].append(features)
         t += 1
         if done:
             break
@@ -55,7 +62,9 @@ def rollout(pi, env):
     rollout["terminal"] = True
     return rollout
 
-policy = Linear(env.observation_space.shape[0], env.action_space.n)
+from clstm import LSTM
+
+policy = LSTM(env.observation_space.shape, env.action_space.n)
 print("Current Norm", sum(p.norm().data.numpy() for p in policy.parameters()))
 import pickle
 for i in range(500):
@@ -64,7 +73,7 @@ for i in range(500):
     print(sum([p.norm() for p in policy.parameters()]))
     model_state = pickle.dumps(policy.get_weights())
     import ipdb; ipdb.set_trace()
-    grad = policy.compute_gradients(batch)
+    grad, info = policy.compute_gradients(batch)
     policy.apply_gradients(grad)
     print(sum([p.norm() for p in policy.parameters()]))
 

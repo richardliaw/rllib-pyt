@@ -30,6 +30,22 @@ class Linear(Policy):
         self.value_branch = nn.Linear(last_layer_size, 1)
         self.setup_loss()
 
+    def compute(self, x, *args):
+        x = Variable(torch.from_numpy(x).float())
+        logits, values, features = self(x)
+        samples = self.probs(logits.unsqueeze(0)).multinomial().squeeze()
+        return self.var_to_np(samples), self.var_to_np(values), features
+
+    def compute_logits(self, x, *args):
+        x = Variable(torch.from_numpy(x).float())
+        res = self.hidden_layers(x)
+        return self.var_to_np(self.logits(res))
+
+    def value(self, x, *args):
+        x = Variable(torch.from_numpy(x).float())
+        res = self.hidden_layers(x)
+        res = self.value_branch(res)
+        return self.var_to_np(res)
 
 if __name__ == '__main__':
     net = Linear(10, 5)
