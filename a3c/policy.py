@@ -19,7 +19,7 @@ def convert_batch(batch):
     advs = advs.view(-1, 1)
     rs = Variable(torch.from_numpy(batch.r.copy()).float())
     rs = rs.view(-1, 1)
-    import ipdb; ipdb.set_trace()
+    # import ipdb; ipdb.set_trace()
     features = [Variable(torch.from_numpy(f)) for f in batch.features]
     return states, acs, advs, rs, features
 
@@ -29,7 +29,7 @@ class Model(nn.Module):
         super(Model, self).__init__()
         self.volatile = False
         self.dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
-        self._init(obs_space, ac_space, {})
+        self._init(obs_space, ac_space.n, {})
 
     def set_volatile(self, volatile):
         ''' Set model to ``volatile``.

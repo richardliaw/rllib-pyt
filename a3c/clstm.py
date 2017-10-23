@@ -51,8 +51,7 @@ class LSTM(Policy):
             layers.append(activation())
             last_layer_size = 32
 
-
-        self.hidden_layers = nn.Sequential(*layers)
+        self._convs = nn.Sequential(*layers)
         self.lstm = nn.LSTMCell(32 * 3 * 3, 256)
 
         self.logits = nn.Linear(256, num_outputs)
@@ -76,43 +75,52 @@ class LSTM(Policy):
         self.train()
         self.setup_loss()
 
-    def forward(self, inputs):
+    def _hiddens(self, inputs):
         """ Internal method - pass in Variables, not numpy arrays
         
         args:
             inputs: observations and features"""
         x, hiddens = inputs
-        res = self.hidden_layers(x)
+        res = self._convs(x)
         res = res.view(-1, 32*3*3)
-        hx, cx = self.lstm(res, hiddens)
-        res = hx
+        return self.lstm(res, hiddens)
 
-        return self.logits(res), self.value_branch(res), (hx, cx)
 
-    def compute(self, x, features, *args):
+    def forward(self, inputs):
+        """ Internal method - pass in Variables, not numpy arrays
+        
+        args:
+            inputs: observations and features"""
+        hx, cx = self._hiddens(inputs)
+        return self.logits(hx), self.value_branch(hx), (hx, cx)
+
+    def compute(self, x, hx, cx, *args):
         # TODO: convert features to variables
         x = Variable(torch.from_numpy(x).float().unsqueeze(0))
-        features = [Variable(torch.from_numpy(f).float()) for f in features]
-        logits, values, features = self((x, features))
+        hx = Variable(torch.from_numpy(hx).float())
+        cx = Variable(torch.from_numpy(cx).float())
+        logits, values, (hx, cx) = self((x, (hx, cx)))
         values = values.squeeze(0)
         samples = self.probs(logits).multinomial().squeeze()
         return self.var_to_np(samples), \
             self.var_to_np(values), \
-            self.var_to_np(features[0]), \
-            self.var_to_np(features[1])
+            self.var_to_np(hx), \
+            self.var_to_np(cx)
 
 
-    def compute_logits(self, x, features, *args):
-        x = Variable(torch.from_numpy(x).float())
-        res = self.hidden_layers(x)
-        res, cx = self.lstm(res, features)
-        return self.var_to_np(self.logits(res))
+    def compute_logits(self, x, hx, cx,*args):
+        x = Variable(torch.from_numpy(x).float().unsqueeze(0))
+        hx = Variable(torch.from_numpy(hx).float())
+        cx = Variable(torch.from_numpy(cx).float())
+        hx, cx = self._hiddens((x, (hx, cx)))
+        return self.var_to_np(self.logits(hx))
 
-    def value(self, x, features, *args):
-        x = Variable(torch.from_numpy(x).float())
-        res = self.hidden_layers(x)
-        res, cx = self.lstm(res, features)
-        res = self.value_branch(res)
+    def value(self, x, hx, cx, *args):
+        x = Variable(torch.from_numpy(x).float().unsqueeze(0))
+        hx = Variable(torch.from_numpy(hx).float())
+        cx = Variable(torch.from_numpy(cx).float())
+        hx, cx = self._hiddens((x, (hx, cx)))
+        res = self.value_branch(hx)
         return self.var_to_np(res)
 
     def get_initial_features(self):

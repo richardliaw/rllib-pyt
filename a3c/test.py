@@ -45,7 +45,7 @@ def rollout(pi, env):
     t = 0
     ob = (env.reset())
     features = pi.get_initial_features()
-    for _ in range(200):
+    for _ in range(2000):
         rets = pi.compute(ob, features)
         ac, value, features = rets[0], rets[1], rets[2:]
         rollout["obs"].append(ob)
@@ -67,19 +67,19 @@ from clstm import LSTM
 policy = LSTM(env.observation_space.shape, env.action_space.n)
 print("Current Norm", sum(p.norm().data.numpy() for p in policy.parameters()))
 import pickle
-for i in range(500):
+for i in range(5):
     data = rollout(policy, env)
     batch = process_rollout(data, 0.99)
     print(sum([p.norm() for p in policy.parameters()]))
-    model_state = pickle.dumps(policy.get_weights())
-    import ipdb; ipdb.set_trace()
-    grad, info = policy.compute_gradients(batch)
-    policy.apply_gradients(grad)
-    print(sum([p.norm() for p in policy.parameters()]))
+    # model_state = pickle.dumps(policy.get_weights())
+    # import ipdb; ipdb.set_trace()
+    # grad, info = policy.compute_gradients(batch)
+    # policy.apply_gradients(grad)
+    # print(sum([p.norm() for p in policy.parameters()]))
 
-    model_state = pickle.loads(model_state)
-    policy.set_weights(model_state)
-    print(sum([p.norm() for p in policy.parameters()]))
+    # model_state = pickle.loads(model_state)
+    # policy.set_weights(model_state)
+    # print(sum([p.norm() for p in policy.parameters()]))
     policy.model_update(batch)
     print(sum([p.norm() for p in policy.parameters()]))
 

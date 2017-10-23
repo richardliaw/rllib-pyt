@@ -12,7 +12,8 @@ import os
 import ray
 from runner import RunnerThread, process_rollout
 from envs import create_and_wrap
-from ray.rllib.common import Agent, TrainingResult
+from ray.rllib.agent import Agent
+from ray.tune.result import TrainingResult
 
 
 DEFAULT_CONFIG = {
