@@ -8,7 +8,8 @@ from linear import Linear
 from clstm import LSTM
 import six.moves.queue as queue
 import os
-
+import time
+from collections import defaultdict
 import ray
 from runner import RunnerThread, process_rollout
 from envs import create_and_wrap
@@ -132,7 +133,7 @@ class A3CAgent(Agent):
             results["apply"].append(t[3] - t[2])
             results["get weights"].append(t[4] - t[3])
 
-        print("\n".join("%s: %0.4f" % (k, np.mean(v)) for k, v in results))
+        print("\n".join("%s: %0.4f" % (k, np.mean(v)) for k, v in results.items()))
         res = self._fetch_metrics_from_workers()
         return res
 
