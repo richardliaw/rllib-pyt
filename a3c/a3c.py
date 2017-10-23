@@ -18,7 +18,7 @@ from ray.tune.result import TrainingResult
 
 DEFAULT_CONFIG = {
     "num_workers": 4,
-    "num_batches_per_iteration": 100,
+    "num_batches_per_iteration": 10,
     "batch_size": 10,
     "use_lstm": True,
     "model": {"grayscale": True,
@@ -107,16 +107,32 @@ class A3CAgent(Agent):
             for agent in self.agents]
         max_batches = self.config["num_batches_per_iteration"]
         batches_so_far = len(gradient_list)
+        all_timing = []
         while gradient_list:
+            timing = []
+            timing.append(time.time())
             done_id, gradient_list = ray.wait(gradient_list)
+            timing.append(time.time())
             gradient, info = ray.get(done_id)[0]
+            timing.append(time.time())
             self.policy.apply_gradients(gradient)
+            timing.append(time.time())
             self.parameters = self.policy.get_weights()
+            timing.append(time.time())
+            all_timing.append(timing)
             if batches_so_far < max_batches:
                 batches_so_far += 1
                 gradient_list.extend(
                     [self.agents[info["id"]].compute_gradient.remote(
                         self.parameters)])
+        results = defaultdict(list)
+        for t in all_timing:
+            results["wait"].append(t[1] - t[0])
+            results["get"].append(t[2] - t[1])
+            results["apply"].append(t[3] - t[2])
+            results["get weights"].append(t[4] - t[3])
+
+        print("\n".join("%s: %0.4f" % (k, np.mean(v)) for k, v in results))
         res = self._fetch_metrics_from_workers()
         return res
 
