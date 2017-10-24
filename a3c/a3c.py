@@ -110,6 +110,7 @@ class A3CAgent(Agent):
         batches_so_far = len(gradient_list)
         all_timing = []
         while gradient_list:
+            print("next grad")
             timing = []
             timing.append(time.time())
             done_id, gradient_list = ray.wait(gradient_list)
