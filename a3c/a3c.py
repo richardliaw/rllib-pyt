@@ -110,7 +110,7 @@ class A3CAgent(Agent):
         batches_so_far = len(gradient_list)
         all_timing = []
         while gradient_list:
-            print("next grad")
+            print(batches_so_far, "next grad")
             timing = []
             timing.append(time.time())
             done_id, gradient_list = ray.wait(gradient_list)
@@ -134,7 +134,8 @@ class A3CAgent(Agent):
             results["apply"].append(t[3] - t[2])
             results["get weights"].append(t[4] - t[3])
 
-        print("\n".join("%s: %0.4f" % (k, np.mean(v)) for k, v in results.items()))
+        print("\n".join("%s: %0.4f | %0.4f" % (k, np.mean(v), np.var(v)) for k, v in results.items()))
+        print(results)
         res = self._fetch_metrics_from_workers()
         return res
 
